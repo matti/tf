@@ -1,0 +1,61 @@
+#!/usr/bin/env sh
+set -e
+
+if [ "$1" = "" ]; then
+  echo "USAGE:
+tf i
+tf aa
+tf dd
+tf target [apply|destroy] component index
+tf terraform command
+"
+  exit 1
+fi
+
+command=$1; shift
+case $command in
+  i)
+    terraform init $@
+  ;;
+  aa)
+    terraform apply -auto-approve $@
+  ;;
+  df)
+    terraform destroy -force $@
+  ;;
+  target)
+    case "$1" in
+      "apply"|"destroy") : ;;
+      *)
+        echo "unknown operation: $operation"
+        exit 1
+      ;;
+    esac
+    operation=$1; shift
+
+    if [ "$1" = "" ]; then
+      echo "no component"
+      exit 1
+    fi
+    component=$1; shift
+
+    if [ "$1" = "" ]; then
+      echo "no index"
+      exit 1
+    fi
+    index=$1; shift
+
+    targets_found=$(terraform state list | grep '^'$component'' | grep ''$index'\]$')
+
+    target_args=""
+    for target in $targets_found; do
+      target_args="$target_args \
+    -target $target"
+    done
+
+    terraform $operation $target_args $@
+  ;;
+  *)
+    terraform $command $@
+  ;;
+esac
