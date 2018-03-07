@@ -17,8 +17,86 @@ case $command in
   i)
     terraform init $@
   ;;
-  aa)
+  aa:single)
+    echo "aa:single in $(pwd)"
+    tf_files=$(find . -mindepth 1 -maxdepth 1 -name *.tf)
+
+    if [ "$tf_files" = "" ]; then
+      echo "no *.tf files found."
+      exit 0
+    fi
+
+    terraform init
+
+    if [ "$TF_WS" != "" ]; then
+      if [ -d "terraform.tfstate.d/$TF_WS" ]; then
+        terraform workspace select $TF_WS
+      else
+        terraform workspace new $TF_WS
+      fi
+    fi
     terraform apply -auto-approve $@
+  ;;
+  aa)
+    $0 aa:single $@
+    $0 aa:recurse $@
+  ;;
+  aa:recurse)
+    dirs=$(find . -mindepth 1 -maxdepth 1 -type d)
+
+    pid_dirs=""
+    pids=""
+    for dir in $dirs; do
+      basenamed_dir=$(basename $dir)
+      case "$basenamed_dir" in
+        .*|terraform*|modules)
+          continue
+        ;;
+      esac
+
+      (cd $basenamed_dir; $0 aa:single) &
+      pid=$!
+      pids="$pids $pid"
+      pid_dirs="$pid_dirs\n$pid=$(pwd)/$basenamed_dir"
+    done
+
+    failed_pids=""
+
+    for pid in $pids; do
+      set +e
+        wait $pid
+        exitcode=$?
+      set -e
+
+      if [ "$exitcode" != 0 ]; then
+        failed_pids="$failed_pids $pid"
+      fi
+    done
+
+    if [ "$failed_pids" != "" ]; then
+      echo "Following projects failed to apply:"
+      for failed_pid in $failed_pids; do
+        echo "$pid_dirs" | grep $failed_pid | cut -d= -f2
+      done
+      exit 1
+    fi
+
+    pids=""
+    for dir in $dirs; do
+       case "$dir" in
+        ./.*|./terraform*|./modules)
+          continue
+        ;;
+      esac
+      (cd $dir; $0 aa:recurse) &
+      pids="$pids $!"
+    done
+
+    for pid in $pids; do
+      set +e
+        wait $pid
+      set -e
+    done
   ;;
   df)
     terraform destroy -force $@
