@@ -1,3 +1,6 @@
 output "second-b-third-b" {
-  value = "run"
+  value = {
+    first  = 1
+    second = 2
+  }
 }
