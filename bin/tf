@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -e
+set -o pipefail
 
 if [ "$1" = "" ]; then
   echo "USAGE:
@@ -18,13 +19,30 @@ prepend() {
   if [ "$shortened_dir" = "" ]; then
     shortened_dir="/"
   fi
-
-  output=$($@)
-  while read; do
-    echo ".$shortened_dir  $REPLY\033[0m"
-  done <<< "$output"
+  shortened_dir=".$shortened_dir"
+  $@ | while read; do echo "\033[0m$shortened_dir  $REPLY"; done
 }
 
+init() {
+  set +e
+    rm -rf .terraform
+  set -e
+  prepend "terraform init"
+
+  if [ "$TF_WS" != "" ]; then
+    workspace_exists=$(terraform workspace list | grep " $TF_WS")
+    if [ "$workspace_exists" != "" ]; then
+      if [ -d .terraform ]; then
+        echo $TF_WS > ".terraform/environment"  # using terraform workspace select breaks the coloring in vs code :o
+        prepend "echo selected workspace $TF_WS"
+      else
+        prepend "echo no need to select workspace $TF_WS "
+      fi
+    else
+      prepend "terraform workspace new $TF_WS"
+    fi
+  fi
+}
 if [ "$TF_INITIAL_PWD" = "" ]; then
   export TF_INITIAL_PWD=$(pwd)
 fi
@@ -35,9 +53,9 @@ case $command in
     terraform init $@
   ;;
   aa)
-    $0 aa:single $@
+    terraform apply -auto-approve $@
   ;;
-  aa:single)
+  aa:recurse:apply)
     echo "⭐  apply start in $(pwd)"
     tf_files=$(find . -mindepth 1 -maxdepth 1 -name "*.tf")
 
@@ -45,28 +63,11 @@ case $command in
       prepend "echo no *.tf files found."
       exit 0
     fi
-    set +e
-      rm -rf .terraform
-    set -e
-    prepend "terraform init"
-
-    if [ "$TF_WS" != "" ]; then
-      workspace_exists=$(terraform workspace list | grep " $TF_WS")
-      if [ "$workspace_exists" != "" ]; then
-        if [ -d .terraform ]; then
-          echo $TF_WS > ".terraform/environment"  # using terraform workspace select breaks the coloring in vs code :o
-          prepend "echo selected workspace $TF_WS"
-        else
-          prepend "echo no need to select workspace $TF_WS "
-        fi
-      else
-        prepend "terraform workspace new $TF_WS"
-      fi
-    fi
+    init
     prepend "terraform apply -auto-approve $@"
   ;;
   aa:recurse)
-    $0 aa:single $@
+    $0 aa:recurse:apply $@
     $0 aa:recurse:sub $@
   ;;
   aa:recurse:sub)
@@ -82,7 +83,7 @@ case $command in
         ;;
       esac
 
-      (cd $basenamed_dir; $0 aa:single) &
+      (cd $basenamed_dir; $0 aa:recurse:apply) &
       pid=$!
       pids="$pids $pid"
       pid_dirs="$pid_dirs\n$pid=$(pwd)/$basenamed_dir"
@@ -128,10 +129,11 @@ case $command in
     done
   ;;
   df)
-    $0 df:single
+    terraform destroy -force $@
   ;;
-  df:single)
+  df:recurse:destroy)
     echo "💥  destroy start in $(pwd)"
+    init
     prepend "terraform destroy -force $@"
   ;;
   df:recurse)
@@ -166,14 +168,16 @@ case $command in
     done
 
     if [ "$failed_pids" != "" ]; then
-      echo "Following projects failed to destroy:"
+      echo "
+
+💀  Following projects failed to destroy:"
       for failed_pid in $failed_pids; do
         echo "$pid_dirs" | grep $failed_pid | cut -d= -f2
       done
       exit 1
     fi
 
-    $0 df:single
+    $0 df:recurse:destroy
   ;;
   target)
     case "$1" in
