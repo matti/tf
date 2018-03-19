@@ -23,10 +23,40 @@ prepend() {
   $@ | while read; do echo "\033[0m$shortened_dir  $REPLY"; done
 }
 
+before_init() {
+  if [ "$TF_WS" = "" ]; then
+    if [ -e "tf.tf" ]; then
+      rm tf.tf
+    fi
+    if [ -e "tf.auto.tfvars" ]; then
+      rm tf.auto.tfvars
+    fi
+
+    return
+  fi
+
+  workspace_tf_path="$HOME/.tf/$TF_WS.tf"
+
+  if [ -e "$workspace_tf_path" ]; then
+    contents=$(cat "$workspace_tf_path")
+    current_dir=$(basename $(pwd))
+
+    echo "$contents" | sed 's/@@current_dir@@/'"$current_dir"'/' > tf.tf
+  fi
+
+  workspace_tfvars_path="$HOME/.tf/$TF_WS.auto.tfvars"
+
+  if [ -e "$workspace_tfvars_path" ]; then
+    cp "$workspace_tfvars_path" tf.auto.tfvars
+  fi
+}
+
 init() {
   set +e
     rm -rf .terraform
   set -e
+
+  before_init
   prepend "terraform init"
 
   if [ "$TF_WS" != "" ]; then
@@ -50,10 +80,10 @@ fi
 command=$1; shift
 case $command in
   i)
-    terraform init $@
+    init $@
   ;;
   aa)
-    terraform apply -auto-approve $@
+    $0 aa:recurse:apply $@
   ;;
   aa:recurse:apply)
     echo "⭐  apply start in $(pwd)"
@@ -129,7 +159,7 @@ case $command in
     done
   ;;
   df)
-    terraform destroy -force $@
+    $0 df:recurse:destroy $@
   ;;
   df:recurse:destroy)
     echo "💥  destroy start in $(pwd)"
